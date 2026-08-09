@@ -7,40 +7,29 @@ Application Streamlit d'automatisation :
      modèle de fiche CEE, ex. BAR-TH-104, BAR-EN-105, ...)
   3) Génération d'un fichier tableau 2 rempli PAR CLIENT et PAR FICHE, avec
      uniquement les opérations de ce client pour cette fiche
-  4) Génération d'un mail type par client dans Outlook (application locale),
-     avec les fichiers générés en pièces jointes
+  4) Pour chaque client : boutons pour copier l'objet du mail, copier le
+     corps du mail type, et télécharger le tableau 2 correspondant
 
 Lancement :
-    pip install streamlit openpyxl pandas pywin32
+    pip install streamlit openpyxl pandas
     streamlit run app.py
-
-NB pywin32 / Outlook : la génération automatique des mails dans Outlook ne
-fonctionne que si l'application tourne SUR le même poste Windows où Outlook
-(application de bureau) est installé et ouvert. Sur un serveur / Mac / Linux,
-cette étape est remplacée par un export .eml + un récapitulatif à copier-coller.
 """
 
 import io
 import os
 import re
+import base64
+import json
 import zipfile
 import unicodedata
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
-
-# ---------------------------------------------------------------------------
-# Essai d'import pywin32 (uniquement disponible / utile sous Windows)
-# ---------------------------------------------------------------------------
-try:
-    import win32com.client  # type: ignore
-    OUTLOOK_AVAILABLE = True
-except Exception:
-    OUTLOOK_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +259,138 @@ def lire_entetes_matrice(contenu_bytes):
 
 
 # ---------------------------------------------------------------------------
+# Génération du mail type (objet + corps) par client / fiche
+# ---------------------------------------------------------------------------
+
+# Nom (normalisé) de la colonne "REFERENCE interne de l'opération" du tableau 1
+# (utilisée pour la liste des dossiers concernés, 6 premiers chiffres)
+COLONNE_REFERENCE_INTERNE = "reference interne de l'operation du demandeur"
+
+MODELE_CORPS_MAIL = (
+    "Bonjour,\n\n"
+    "En vue de la réalisation du contrôle sur site à la suite de la fiche "
+    "« {fiche_cee} » merci de nous fournir les coordonnées d'un contact afin "
+    "de les transmettre à l'organisme de contrôle « {organisme_controle} » "
+    "pour la prise de rendez-vous.\n\n"
+    "Pour cela merci de remplir les colonnes {colonnes_interlocuteur} du "
+    "tableau 2 dans le tableau ci-joint.\n\n"
+    "- \"L'interlocuteur - contrôle sur site\" (colonnes bleues) est le contact "
+    "qui sera appelé par le bureau de contrôle pour la prise et la réalisation "
+    "des rendez-vous. (Obligatoire) Il doit s'agir de la personne qui pourra "
+    "faire accéder aux travaux :\n"
+    "        • Locataire si les travaux sont accessibles depuis les parties "
+    "privatives\n"
+    "        • Personne de votre organisme si les travaux sont accessibles "
+    "depuis les parties communes\n\n"
+    "- \"L'accompagnant - contrôle sur site\" (colonnes bleu clair) est un "
+    "contact de votre organisme souhaitant être présent lors du rendez-vous "
+    "s'il n'est pas interlocuteur - contrôle sur site. (Facultatif)\n\n"
+    "De plus cette opération est aussi susceptible de faire l'objet d'un "
+    "contrôle par contact (mail ou appel téléphonique).\n\n"
+    "- \"L'interlocuteur - contrôle par contact\" (colonnes orange) est la "
+    "personne de votre organisme qui sera contacté pour répondre aux "
+    "questions sur la réalisation des travaux. (Obligatoire)\n\n"
+    "Il vous appartient d'informer le ou les contacts fournis d'un potentiel "
+    "contrôle, de la nécessité de le faciliter et de le permettre sans quoi "
+    "les CEE ne pourront être délivrés. Le bureau de contrôle est susceptible "
+    "de demander des informations sur la réalisation des travaux pour "
+    "préparer la visite du contrôleur, le contact transmis devra connaitre "
+    "les travaux ou pouvoir se renseigner.\n\n"
+    "Un retour est attendu au plus tard le {date_limite}, le contact transmis "
+    "sera joint par le bureau de contrôle prochainement, à ce moment la date "
+    "du rendez-vous sera convenue. En fonction de l'avancée des contrôles et "
+    "de l'échantillonnage, il est toutefois possible que vous ne soyez pas "
+    "contacté.\n\n"
+    "Voici vos dossiers concernés :\n"
+    "{liste_dossiers}\n\n"
+    "L'organisme de contrôle va vous demander les pièces justificatives (OS, "
+    "devis, facture...), néanmoins cette demande ne vous concerne pas. Nous "
+    "avons déjà les documents nécessaires en notre possession et leur "
+    "transmettrons au besoin. Vous pouvez répondre que vous les avez mais ne "
+    "pourrez pas les fournir au moment du contrôle.\n\n"
+    "Vous souhaitant bonne réception et restant à votre disposition.\n\n"
+    "Cordialement,"
+)
+
+
+def construire_objet_mail(numero_lot, identifiant_client):
+    return f'"Demande de coordonnées" - {numero_lot} - {identifiant_client}'
+
+
+# Colonnes source (tableau 1) à essayer, par ordre de préférence, pour
+# retrouver le "bureau / organisme de contrôle" d'une opération (certaines
+# fiches n'exposent que le SIREN, pas la raison sociale)
+NOMS_ORGANISME_CONTROLE_SOURCE = [
+    "raison sociale de l'organisme de controle sur site",
+    "raison sociale de l'organisme de controle",
+    "siren de l'organisme de controle sur site",
+    "siren de l'organisme de controle",
+]
+
+
+def extraire_organisme_controle(operations_client, index_cols_source):
+    """Retourne le(s) nom(s) d'organisme de contrôle trouvé(s) parmi les
+    opérations du client (colonne du tableau 1), joints par ' / ' s'il y en
+    a plusieurs. Retourne None si rien n'est trouvé."""
+    nom_colonne = None
+    for candidat in NOMS_ORGANISME_CONTROLE_SOURCE:
+        if candidat in index_cols_source:
+            nom_colonne = candidat
+            break
+    if not nom_colonne:
+        return None
+    valeurs = []
+    for op in operations_client:
+        v = op.get(nom_colonne)
+        if v not in (None, "") and str(v) not in valeurs:
+            valeurs.append(str(v))
+    return " / ".join(valeurs) if valeurs else None
+
+
+def trouver_plage_colonnes_interlocuteur(entetes):
+    """Retourne (lettre_debut, lettre_fin) de la plage de colonnes
+    'interlocuteur' à remplir par le client, entre 'Nom interlocuteur -
+    contrôle sur site' (inclus) et juste avant 'INFORMATIONS
+    COMPLEMENTAIRES' (exclu). Retourne (None, None) si introuvable."""
+    col_debut = None
+    col_fin_infos = None
+    for c, nom_entete in entetes.items():
+        if nom_entete == "nom interlocuteur - controle sur site" and col_debut is None:
+            col_debut = c
+        if nom_entete == "informations complementaires":
+            col_fin_infos = c
+    if col_debut is None or col_fin_infos is None:
+        return None, None
+    return get_column_letter(col_debut), get_column_letter(col_fin_infos - 1)
+
+
+def construire_corps_mail(code_fiche, organisme_controle, colonnes_interlocuteur, operations_client):
+    if colonnes_interlocuteur == (None, None):
+        colonnes_txt = "[à vérifier manuellement : plage de colonnes non détectée automatiquement]"
+    else:
+        colonnes_txt = f"{colonnes_interlocuteur[0]} à {colonnes_interlocuteur[1]}"
+
+    date_limite = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
+
+    prefixes = []
+    for op in operations_client:
+        ref = op.get(COLONNE_REFERENCE_INTERNE)
+        if ref:
+            prefixe = str(ref).strip()[:6]
+            if prefixe and prefixe not in prefixes:
+                prefixes.append(prefixe)
+    liste_dossiers = "\n".join(f"- {p}" for p in prefixes) if prefixes else "- (aucune référence trouvée)"
+
+    return MODELE_CORPS_MAIL.format(
+        fiche_cee=code_fiche,
+        organisme_controle=organisme_controle or "[organisme de contrôle non trouvé]",
+        colonnes_interlocuteur=colonnes_txt,
+        date_limite=date_limite,
+        liste_dossiers=liste_dossiers,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Correspondance "données techniques" par fiche CEE (dépend de la fiche CEE,
 # ex: BAR-EN-103 -> colonnes isolation à remplir depuis le tableau 1).
 #
@@ -468,6 +589,113 @@ def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_
     wb.save(buffer)
     buffer.seek(0)
     return buffer.read(), colonnes_non_mappees, cibles_techniques_non_trouvees
+
+
+# ---------------------------------------------------------------------------
+# Bloc d'actions par client (composant HTML/JS) : copier l'objet du mail,
+# copier le corps du mail, télécharger le tableau 2 — sans passer par le
+# serveur Streamlit pour le téléchargement (évite les soucis liés au blocage
+# de requêtes réseau par certains navigateurs/extensions), et avec un retour
+# visuel (bouton qui passe en vert) une fois l'action effectuée.
+# ---------------------------------------------------------------------------
+
+_STYLE_BOUTON = (
+    "padding:0.5rem 1rem;border-radius:0.5rem;border:1px solid #d0d3d9;"
+    "background:#ffffff;color:#31333F;font-size:14px;cursor:pointer;"
+    "font-family:'Source Sans Pro',sans-serif;transition:background 0.15s;"
+)
+
+
+def rendre_bloc_actions_client(cle, client_label, objet, corps_mail, nom_fichier, octets_fichier):
+    b64 = base64.b64encode(octets_fichier).decode("ascii")
+    objet_js = json.dumps(objet)
+    corps_js = json.dumps(corps_mail)
+    nom_fichier_js = json.dumps(nom_fichier)
+    label_js = json.dumps(client_label)
+
+    html = f"""
+    <div style="font-family:'Source Sans Pro',sans-serif;margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:#31333F;">
+        {client_label}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button id="obj_{cle}" style="{_STYLE_BOUTON}">📋 Copier l'objet</button>
+        <button id="mail_{cle}" style="{_STYLE_BOUTON}">📋 Copier le mail</button>
+        <button id="dl_{cle}" style="{_STYLE_BOUTON}">⬇️ Télécharger le tableau 2</button>
+      </div>
+    </div>
+    <script>
+      (function() {{
+        const objetTxt = {objet_js};
+        const corpsTxt = {corps_js};
+        const nomFichier = {nom_fichier_js};
+        const b64Data = "{b64}";
+
+        function copierTexte(txt) {{
+          if (navigator.clipboard && navigator.clipboard.writeText) {{
+            return navigator.clipboard.writeText(txt).catch(function() {{
+              copieFallback(txt);
+            }});
+          }}
+          copieFallback(txt);
+          return Promise.resolve();
+        }}
+
+        function copieFallback(txt) {{
+          const ta = document.createElement('textarea');
+          ta.value = txt;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          try {{ document.execCommand('copy'); }} catch (e) {{}}
+          document.body.removeChild(ta);
+        }}
+
+        function marquerFait(bouton, texte) {{
+          bouton.style.background = '#28a745';
+          bouton.style.color = 'white';
+          bouton.style.borderColor = '#28a745';
+          bouton.innerText = texte;
+        }}
+
+        document.getElementById('obj_{cle}').addEventListener('click', function() {{
+          const btn = this;
+          copierTexte(objetTxt).then(function() {{
+            marquerFait(btn, '✓ Objet copié');
+          }});
+        }});
+
+        document.getElementById('mail_{cle}').addEventListener('click', function() {{
+          const btn = this;
+          copierTexte(corpsTxt).then(function() {{
+            marquerFait(btn, '✓ Mail copié');
+          }});
+        }});
+
+        document.getElementById('dl_{cle}').addEventListener('click', function() {{
+          const byteChars = atob(b64Data);
+          const byteNumbers = new Array(byteChars.length);
+          for (let i = 0; i < byteChars.length; i++) {{
+            byteNumbers[i] = byteChars.charCodeAt(i);
+          }}
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], {{type: "{MIME_XLSX}"}});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = nomFichier;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(function() {{ URL.revokeObjectURL(url); }}, 2000);
+          marquerFait(this, '✓ Téléchargé');
+        }});
+      }})();
+    </script>
+    """
+    components.html(html, height=90)
 
 
 # ---------------------------------------------------------------------------
@@ -676,9 +904,10 @@ if fichier_source and fichiers_matrices and mapping_valide:
         generer_complet = st.button("Générer le tableau 2 complet (tous clients)")
 
     if generer_par_client:
-        resultats = {}  # client -> [(nom_fichier, bytes)]
+        resultats = {}  # client -> [ {nom_fichier, octets, code_fiche, objet, corps_mail} ]
         avertissements_colonnes = {}
         avertissements_technique = {}
+        avertissements_mail = {}
         lot_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(numero_lot or "LOT_INCONNU")).strip()
         with st.spinner("Génération en cours..."):
             for client, par_fiche in groupes.items():
@@ -703,7 +932,32 @@ if fichier_source and fichiers_matrices and mapping_valide:
                         # que les fichiers ne s'écrasent entre eux
                         nom_sortie += f" - {code_fiche}"
                     nom_sortie += ".xlsx"
-                    fichiers_client.append((nom_sortie, octets))
+
+                    # --- éléments du mail type pour ce client / cette fiche ---
+                    _, _, entetes_matrice = lire_entetes_matrice(contenu)
+                    organisme_controle = extraire_organisme_controle(ops, index_cols_source)
+                    colonnes_interlocuteur = trouver_plage_colonnes_interlocuteur(entetes_matrice)
+                    objet = construire_objet_mail(numero_lot or "LOT_INCONNU", client)
+                    corps_mail = construire_corps_mail(code_fiche, organisme_controle, colonnes_interlocuteur, ops)
+
+                    cle_avert = f"{client} / {code_fiche}"
+                    manques = []
+                    if not organisme_controle:
+                        manques.append("organisme de contrôle non trouvé dans le tableau 1")
+                    if colonnes_interlocuteur == (None, None):
+                        manques.append("plage de colonnes interlocuteur non détectée dans la matrice")
+                    if manques:
+                        avertissements_mail[cle_avert] = manques
+
+                    fichiers_client.append(
+                        {
+                            "nom_fichier": nom_sortie,
+                            "octets": octets,
+                            "code_fiche": code_fiche,
+                            "objet": objet,
+                            "corps_mail": corps_mail,
+                        }
+                    )
                     if colonnes_non_mappees:
                         avertissements_colonnes[nom_matrice] = colonnes_non_mappees
                     if cibles_non_trouvees:
@@ -725,6 +979,12 @@ if fichier_source and fichiers_matrices and mapping_valide:
                 for cle, cibles in avertissements_technique.items():
                     st.write(f"**{cle}**")
                     st.write(", ".join(cibles))
+
+        if avertissements_mail:
+            with st.expander("⚠️ Informations manquantes pour le mail type (à compléter manuellement)"):
+                for cle, manques in avertissements_mail.items():
+                    st.write(f"**{cle}** : " + ", ".join(manques))
+
 
     if generer_complet:
         resultats_complet = {}  # code_fiche -> (nom_fichier, bytes)
@@ -818,139 +1078,41 @@ if resultats_complet:
                 )
 
 if resultats:
-    st.subheader("5b. Fichiers par client")
-
-    # zip global (tous clients, tous fichiers)
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
-        for client, fichiers in resultats.items():
-            client_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(client))[:80]
-            for nom_fichier, octets in fichiers:
-                z.writestr(f"{client_safe}/{nom_fichier}", octets)
-    zip_buffer.seek(0)
-
-    st.download_button(
-        "📦 Télécharger tous les clients (.zip)",
-        data=zip_buffer,
-        file_name=f"fiches_par_client_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-        mime=MIME_ZIP,
-        key="dl_tous_clients_zip",
+    st.subheader("5b. Actions par client")
+    st.caption(
+        "Pour chaque client (et chaque fiche s'il y en a plusieurs) : copiez "
+        "l'objet du mail, copiez le corps du mail type, et téléchargez le "
+        "tableau 2 correspondant. Les boutons passent en vert une fois "
+        "l'action effectuée."
     )
 
-    st.caption("Ou téléchargez le zip d'un seul client :")
     for i, (client, fichiers) in enumerate(resultats.items()):
         if not fichiers:
             continue
-        client_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(client))[:80]
-        if len(fichiers) == 1:
-            nom_fichier, octets = fichiers[0]
-            st.download_button(
-                f"📄 {client} — {nom_fichier}",
-                data=octets,
-                file_name=nom_fichier,
-                mime=MIME_XLSX,
-                key=f"dl_client_unique_{i}_{client_safe}",
-            )
-        else:
-            zip_client = io.BytesIO()
-            with zipfile.ZipFile(zip_client, "w", zipfile.ZIP_DEFLATED) as z:
-                for nom_fichier, octets in fichiers:
-                    z.writestr(nom_fichier, octets)
-            zip_client.seek(0)
-            st.download_button(
-                f"📦 {client} ({len(fichiers)} fichier(s))",
-                data=zip_client,
-                file_name=f"{client_safe}.zip",
-                mime=MIME_ZIP,
-                key=f"dl_client_zip_{i}_{client_safe}",
+        for j, entree in enumerate(fichiers):
+            libelle = client
+            if len(fichiers) > 1:
+                libelle += f" — {entree['code_fiche']}"
+            rendre_bloc_actions_client(
+                cle=f"{i}_{j}",
+                client_label=libelle,
+                objet=entree["objet"],
+                corps_mail=entree["corps_mail"],
+                nom_fichier=entree["nom_fichier"],
+                octets_fichier=entree["octets"],
             )
 
-    with st.expander("Voir / télécharger fichier par fichier (par client)"):
+    with st.expander("Voir le détail des mails générés (texte brut)"):
         for i, (client, fichiers) in enumerate(resultats.items()):
-            st.markdown(f"**{client}**")
-            for j, (nom_fichier, octets) in enumerate(fichiers):
-                st.download_button(
-                    f"Télécharger : {nom_fichier}",
-                    data=octets,
-                    file_name=nom_fichier,
-                    mime=MIME_XLSX,
-                    key=f"dl_detail_{i}_{j}",
-                )
-
-    # --- Mails -----------------------------------------------------------
-    st.header("6. Mails clients")
-
-    sujet_defaut = "Contrôle de vos opérations CEE — {client}"
-    corps_defaut = (
-        "Bonjour,\n\n"
-        "Veuillez trouver ci-joint le(s) tableau(x) de contrôle relatif(s) à "
-        "vos opérations ({nb_fiches} fiche(s), {nb_operations} opération(s) "
-        "au total).\n\n"
-        "N'hésitez pas à revenir vers nous pour toute question.\n\n"
-        "Cordialement,"
-    )
-
-    sujet_modele = st.text_input("Sujet du mail (variables : {client}, {nb_fiches}, {nb_operations})", value=sujet_defaut)
-    corps_modele = st.text_area(
-        "Corps du mail (variables : {client}, {nb_fiches}, {nb_operations})",
-        value=corps_defaut,
-        height=200,
-    )
-
-    if not OUTLOOK_AVAILABLE:
-        st.info(
-            "Outlook (application de bureau Windows) n'est pas détecté sur cette "
-            "machine — l'ouverture automatique des mails n'est disponible que si "
-            "l'application est lancée sur un poste Windows avec Outlook installé "
-            "et pywin32 (`pip install pywin32`). Vous pouvez malgré tout "
-            "prévisualiser les mails ci-dessous et les composer manuellement."
-        )
-
-    with st.expander("Aperçu des mails par client"):
-        for client, fichiers in resultats.items():
-            nb_fiches = len(fichiers)
-            nb_operations = sum(
-                len(ops)
-                for par_fiche in [groupes.get(client, {})]
-                for ops in par_fiche.values()
-            ) if "groupes" in dir() else nb_fiches
-            sujet = sujet_modele.format(client=client, nb_fiches=nb_fiches, nb_operations=nb_operations)
-            corps = corps_modele.format(client=client, nb_fiches=nb_fiches, nb_operations=nb_operations)
-            st.markdown(f"**{client}** — pièces jointes : {', '.join(n for n, _ in fichiers)}")
-            st.text(f"Objet : {sujet}\n\n{corps}")
-            st.divider()
-
-    generer_label = (
-        "✉️ Générer les mails dans Outlook (brouillons)"
-        if OUTLOOK_AVAILABLE
-        else "✉️ Générer les mails (indisponible sans Outlook local)"
-    )
-    if st.button(generer_label, disabled=not OUTLOOK_AVAILABLE):
-        outlook = win32com.client.Dispatch("Outlook.Application")
-        nb_crees = 0
-        # les pièces jointes doivent exister sur disque pour Outlook COM
-        dossier_tmp = os.path.join(os.environ.get("TEMP", "."), "fiches_ceee_tmp")
-        os.makedirs(dossier_tmp, exist_ok=True)
-        for client, fichiers in resultats.items():
-            mail = outlook.CreateItem(0)  # 0 = olMailItem
-            mail.Subject = sujet_modele.format(
-                client=client, nb_fiches=len(fichiers), nb_operations=len(fichiers)
-            )
-            mail.Body = corps_modele.format(
-                client=client, nb_fiches=len(fichiers), nb_operations=len(fichiers)
-            )
-            for nom_fichier, octets in fichiers:
-                chemin = os.path.join(dossier_tmp, nom_fichier)
-                with open(chemin, "wb") as f:
-                    f.write(octets)
-                mail.Attachments.Add(chemin)
-            mail.Display()  # ouvre le brouillon pour relecture (n'envoie pas)
-            nb_crees += 1
-        st.success(f"{nb_crees} brouillon(s) ouvert(s) dans Outlook.")
+            for entree in fichiers:
+                st.markdown(f"**{client} — {entree['code_fiche']}**")
+                st.text(f"Objet : {entree['objet']}\n\n{entree['corps_mail']}")
+                st.divider()
 
 st.divider()
 st.caption(
-    "Astuce : le mapping code fiche → fichier matrice et les colonnes non "
-    "reconnues sont affichés pour vérification — pensez à les contrôler avant "
-    "un envoi réel aux clients."
+    "Astuce : le mapping code fiche → fichier matrice, les colonnes non "
+    "reconnues et les informations manquantes pour le mail sont affichés "
+    "pour vérification — pensez à les contrôler avant un envoi réel aux "
+    "clients."
 )

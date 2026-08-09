@@ -6,11 +6,6 @@
 pip install -r requirements.txt
 ```
 
-Sous Windows, si vous voulez la génération automatique des mails Outlook, ajoutez :
-```bash
-pip install pywin32
-```
-
 ## Lancement
 
 ```bash
@@ -35,35 +30,54 @@ Une page s'ouvre dans votre navigateur (généralement http://localhost:8501).
    ponctuellement à l'écran pour vérification, mais toute modification faite
    ici ne persiste pas après fermeture de la page (voir plus bas pour la
    modifier de façon permanente).
-4. **Analyse** : l'application lit le tableau 1, regroupe les opérations par
-   client, et affiche un récapitulatif (nombre d'opérations par client et par
-   fiche). Si un code de fiche du tableau 1 n'a pas de matrice associée,
-   un avertissement s'affiche et ces opérations sont ignorées.
+4. **Analyse** : l'application lit le tableau 1, détecte le numéro de lot,
+   regroupe les opérations par client, et affiche un récapitulatif (nombre
+   d'opérations par client et par fiche). Si un code de fiche du tableau 1
+   n'a pas de matrice associée, un avertissement s'affiche et ces opérations
+   sont ignorées.
 5. **Génération** : deux boutons indépendants sont disponibles :
    - **"Générer les fichiers tableau 2 par client"** : un fichier par client et
-     par type de fiche (un client avec deux types d'opérations différents
-     recevra deux fichiers).
+     par type de fiche, plus l'objet et le corps du mail type correspondants.
    - **"Générer le tableau 2 complet (tous clients)"** : un fichier par fiche,
      mais contenant **toutes** les opérations de **tous** les clients — pratique
-     pour une vue d'ensemble ou un contrôle global, sans avoir à ouvrir un
-     fichier par client.
+     pour une vue d'ensemble ou un contrôle global.
    Vous pouvez utiliser l'un, l'autre, ou les deux.
-6. **Téléchargement** :
-   - *Tableau 2 complet* : téléchargement direct si une seule fiche est
-     concernée, sinon un .zip regroupant un fichier par fiche (+ téléchargement
-     fichier par fichier dans un menu déroulant).
-   - *Par client* : un .zip global (tous les clients), un bouton de
-     téléchargement dédié pour **chaque client** (fichier unique ou .zip selon
-     le nombre de fiches du client), et le détail fichier par fichier dans un
-     menu déroulant.
-7. **Mails** : personnalisez le sujet et le corps du mail type (variables
-   disponibles : `{client}`, `{nb_fiches}`, `{nb_operations}`), prévisualisez,
-   puis :
-   - **Sur un poste Windows avec Outlook installé** : le bouton crée un
-     brouillon par client dans Outlook, pièces jointes incluses, prêt à
-     relire avant envoi (rien n'est envoyé automatiquement).
-   - **Ailleurs** (Mac/Linux, ou test) : l'aperçu texte reste disponible pour
-     copier-coller manuellement ; le bouton Outlook est désactivé.
+6. **Actions par client** : pour chaque client (et chaque fiche s'il y en a
+   plusieurs), trois boutons sont disponibles :
+   - **📋 Copier l'objet** — copie l'objet du mail dans le presse-papiers.
+   - **📋 Copier le mail** — copie le corps du mail type (coordonnées du
+     client, du lot et du bureau de contrôle déjà intégrées) dans le
+     presse-papiers.
+   - **⬇️ Télécharger le tableau 2** — télécharge directement le fichier Excel
+     rempli pour ce client (téléchargement géré par le navigateur, sans passer
+     par le serveur Streamlit).
+   Chaque bouton passe en **vert** une fois l'action effectuée, pour un suivi
+   visuel rapide de ce qui a déjà été traité.
+
+## Le mail type
+
+Le corps du mail reprend le modèle fourni (`Mail_typee_DDC.docx`), avec les
+champs suivants complétés automatiquement à partir du tableau 2 généré :
+
+| Champ du modèle | Source |
+|---|---|
+| Fiche CEE | Code de la fiche (ex. `BAR-EN-103`) |
+| Organisme de contrôle | Colonne "RAISON sociale de l'organisme de contrôle" du tableau 1 (ou son SIREN si la raison sociale n'est pas disponible) |
+| Plage de colonnes à remplir | Calculée automatiquement : de "Nom interlocuteur - contrôle sur site" jusqu'à juste avant "INFORMATIONS COMPLEMENTAIRES", dans la matrice utilisée |
+| Date limite de retour | Date du jour + 1 semaine |
+| Liste des dossiers concernés | 6 premiers caractères de "REFERENCE interne de l'opération", dédupliqués, un par ligne |
+
+Si l'organisme de contrôle ou la plage de colonnes n'est pas trouvé pour un
+client (donnée absente du tableau 1, ou structure de matrice non reconnue),
+le mail est quand même généré avec une mention explicite à compléter
+manuellement (`[organisme de contrôle non trouvé]` ou équivalent), et un
+avertissement récapitulatif s'affiche après la génération.
+
+**Hypothèse retenue pour l'objet du mail** : en l'absence d'un numéro client
+identifié dans le tableau 1, l'objet utilise le **nom du client** (raison
+sociale) : `"Demande de coordonnées" - {numéro de lot} - {nom du client}`. Si
+vous disposez d'un véritable numéro client distinct du nom, signalez-le pour
+adapter la formule.
 
 ## Comment fonctionne le report des colonnes
 
@@ -86,12 +100,12 @@ modèles matrices avaient un format "date" préréglé qui aurait déformé
 l'affichage de valeurs numériques (ex. un SIREN). Le script réinitialise
 systématiquement le format des cellules qu'il remplit pour éviter ce piège.
 
-## Nommage des fichiers générés
+## Nommage des fichiers et de l'objet du mail
 
 - **Numéro de lot** : détecté automatiquement dans le nom du fichier tableau 1
   (motif attendu : `..._lot_de_controle_NUMERO_...`, ex.
   `ODICEE_Export_lot_de_controle_XX818P_...xlsx` → `XX818P`). Il est affiché
-  et modifiable à l'écran (étape 3) avant génération — si le motif n'est pas
+  et modifiable à l'écran (étape 4) avant génération — si le motif n'est pas
   détecté, un avertissement s'affiche et vous devez le renseigner vous-même.
 - **Fichier groupé** ("tableau 2 complet") : nommé `{numéro de lot}.xlsx`. Si
   plusieurs types de fiches sont présents dans le lot, un fichier est généré
@@ -102,10 +116,10 @@ systématiquement le format des cellules qu'il remplit pour éviter ce piège.
   plusieurs types de fiches différents, le code fiche est ajouté en fin de
   nom pour éviter que les fichiers ne s'écrasent entre eux (ex. `Demande de
   coordonnées - XX818P - Client 3 - BAR-EN-103.xlsx`).
+- **Objet du mail** : `"Demande de coordonnées" - {numéro de lot} - {nom du
+  client}` (voir hypothèse ci-dessus).
 
-## Limites connues / à vérifier avec vous
-
-### Colonnes techniques propres à chaque fiche CEE
+## Colonnes techniques propres à chaque fiche CEE
 
 En plus des colonnes communes, chaque fiche CEE peut nécessiter le report de
 colonnes techniques spécifiques (ex. surface, épaisseur, marque et référence
@@ -144,5 +158,8 @@ page.
   colonne de la matrice correspondante, un avertissement s'affiche après la
   génération (elle n'est alors pas remplie) — vérifiez l'orthographe exacte
   dans votre tableau de correspondance dans ce cas.
-- La génération Outlook nécessite que l'application tourne sur le poste
-  Windows où Outlook (application de bureau) est ouvert.
+- Le bouton "Copier" utilise l'API presse-papiers du navigateur (avec un
+  repli automatique si elle est indisponible) — fonctionne dans tous les
+  navigateurs modernes, y compris via `streamlit run` local.
+- L'objet du mail utilise le nom du client, pas un numéro client dédié (voir
+  section "Le mail type" ci-dessus).
