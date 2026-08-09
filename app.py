@@ -257,45 +257,37 @@ def lire_entetes_matrice(contenu_bytes):
 
 
 # ---------------------------------------------------------------------------
-# Lecture du tableau de correspondance "données techniques" (dépend de la
-# fiche CEE, ex: BAR-EN-103 -> colonnes isolation à remplir depuis le tableau 1)
+# Correspondance "données techniques" par fiche CEE (dépend de la fiche CEE,
+# ex: BAR-EN-103 -> colonnes isolation à remplir depuis le tableau 1).
+#
+# Intégrée en dur ici (plus besoin de fournir un fichier à chaque lancement).
+# Pour ajouter/modifier une règle : ajoutez une entrée à cette liste avec
+#   - code_fiche : le code de la fiche CEE (ex "BAR-EN-103")
+#   - colonne_cible : le nom (approximatif, tel qu'affiché) de la colonne à
+#     remplir dans le tableau 2
+#   - expression_source : le(s) nom(s) de colonne(s) du tableau 1 à
+#     concaténer avec un "+", ou une valeur fixe si aucune colonne ne
+#     correspond (ex: "3.85")
 # ---------------------------------------------------------------------------
 
-def lire_tableau_technique(fichier):
-    """Lit le fichier de correspondance données techniques.
-    Colonnes attendues : Fiche CEE | Valeur à remplir sur le tableau 2 |
-    équivalent à récupérer sur le tableau 1.
-    La colonne 'Fiche CEE' n'est renseignée que sur la 1ère ligne de chaque
-    groupe (fusion visuelle) : on la propage sur les lignes suivantes.
-    Retourne une liste de dicts : {code_fiche, colonne_cible, expression}."""
-    wb = openpyxl.load_workbook(fichier, data_only=True)
-    ws = wb[wb.sheetnames[0]]
+DONNEES_TECHNIQUES_PAR_FICHE = [
+    {"code_fiche": "BAR-EN-103", "colonne_cible": "Surface déclarée dans l'AH/facture (m2)", "expression_source": "Surface isolant (m²)"},
+    {"code_fiche": "BAR-EN-103", "colonne_cible": "Marque et référence de l'isolant déclarées", "expression_source": "Marque isolant + Référence isolant"},
+    {"code_fiche": "BAR-EN-103", "colonne_cible": "Valeur R ou Lambda déclaré", "expression_source": "Résistance"},
+    {"code_fiche": "BAR-EN-103", "colonne_cible": "Epaisseur minimum théorique (mm) (après tassement si isolant soufflé)", "expression_source": "Epaisseur isolant (mm)"},
 
-    header_row = 1
-    for r in range(1, min(5, ws.max_row) + 1):
-        v = normaliser(ws.cell(row=r, column=1).value)
-        if "fiche" in v:
-            header_row = r
-            break
+    {"code_fiche": "BAR-EN-101", "colonne_cible": "Surface déclarée dans l'AH/facture (m2)", "expression_source": "Surface isolant (m²)"},
+    {"code_fiche": "BAR-EN-101", "colonne_cible": "Type d'isolant (soufflé/posé/autre) déclaré", "expression_source": "Type de comble"},
+    {"code_fiche": "BAR-EN-101", "colonne_cible": "Marque et référence de l'isolant déclarées", "expression_source": "Marque isolant + Référence isolant"},
+    {"code_fiche": "BAR-EN-101", "colonne_cible": "Valeur R ou Lambda déclaré", "expression_source": "Résistance"},
+    {"code_fiche": "BAR-EN-101", "colonne_cible": "Epaisseur minimum théorique (mm) (après tassement si isolant soufflé)", "expression_source": "Epaisseur isolant (mm)"},
 
-    lignes = []
-    dernier_code = None
-    for r in range(header_row + 1, ws.max_row + 1):
-        code = ws.cell(row=r, column=1).value
-        cible = ws.cell(row=r, column=2).value
-        expression = ws.cell(row=r, column=3).value
-        if code:
-            dernier_code = str(code).strip().upper()
-        if not cible or not expression:
-            continue
-        lignes.append(
-            {
-                "code_fiche": dernier_code or "",
-                "colonne_cible": str(cible).strip(),
-                "expression_source": str(expression).strip(),
-            }
-        )
-    return lignes
+    {"code_fiche": "BAR-EN-102", "colonne_cible": "Surface déclarée dans l'AH/facture (m2)", "expression_source": "Surface isolant (m²)"},
+    {"code_fiche": "BAR-EN-102", "colonne_cible": "Marque et référence de l'isolant déclarées", "expression_source": "Marque isolant + Référence isolant"},
+    {"code_fiche": "BAR-EN-102", "colonne_cible": "Valeur de résistance thermique  déclarée", "expression_source": "3.85"},
+
+    {"code_fiche": "BAR-EN-105", "colonne_cible": "Surface déclarée dans l'AH/facture (m2)", "expression_source": "Surface isolant (m²)"},
+]
 
 
 def resoudre_expression_technique(expression, index_cols_source):
@@ -489,18 +481,6 @@ with col2:
         key="matrices",
     )
 
-fichier_technique = st.file_uploader(
-    "Tableau de correspondance des données techniques par fiche (.xlsx) — optionnel",
-    type=["xlsx"],
-    key="technique",
-    help=(
-        "Colonnes attendues : 'Fiche CEE tableau 1' | 'Valeur à remplir sur le "
-        "tableau 2' | 'équivalent à récupérer sur le tableau 1'. Une valeur qui "
-        "ne correspond à aucune colonne du tableau 1 (ex: '3.85') est écrite "
-        "telle quelle, comme valeur fixe."
-    ),
-)
-
 fichiers_matrices = {}  # nom -> bytes
 if fichiers_matrices_up:
     for f in fichiers_matrices_up:
@@ -541,34 +521,27 @@ if fichiers_matrices:
     )
 
 # --- Étape 2bis : tableau des données techniques par fiche -----------------
-lignes_techniques = []
-if fichier_technique:
-    st.header("2bis. Colonnes techniques par fiche")
-    st.caption(
-        "Vérifiez la correspondance détectée : colonne(s) source du tableau 1 "
-        "(concaténées avec '+') ou valeur fixe si aucune colonne ne correspond."
-    )
-    try:
-        lignes_techniques = lire_tableau_technique(fichier_technique)
-    except Exception as e:
-        st.error(f"Erreur de lecture du tableau technique : {e}")
-        lignes_techniques = []
-
-    if lignes_techniques:
-        apercu_technique = st.data_editor(
-            lignes_techniques,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "code_fiche": st.column_config.TextColumn("Code fiche"),
-                "colonne_cible": st.column_config.TextColumn("Colonne à remplir (tableau 2)"),
-                "expression_source": st.column_config.TextColumn(
-                    "Colonne(s) source (tableau 1) ou valeur fixe"
-                ),
-            },
-            key="editeur_technique",
-        )
-        lignes_techniques = apercu_technique
+st.header("2bis. Colonnes techniques par fiche")
+st.caption(
+    "Correspondance intégrée à l'application : colonne(s) source du tableau 1 "
+    "(concaténées avec '+') ou valeur fixe si aucune colonne ne correspond. "
+    "Modifiable ponctuellement ci-dessous si besoin (non sauvegardé après "
+    "fermeture de la page — pour un changement permanent, modifiez le code)."
+)
+apercu_technique = st.data_editor(
+    DONNEES_TECHNIQUES_PAR_FICHE,
+    num_rows="dynamic",
+    use_container_width=True,
+    column_config={
+        "code_fiche": st.column_config.TextColumn("Code fiche"),
+        "colonne_cible": st.column_config.TextColumn("Colonne à remplir (tableau 2)"),
+        "expression_source": st.column_config.TextColumn(
+            "Colonne(s) source (tableau 1) ou valeur fixe"
+        ),
+    },
+    key="editeur_technique",
+)
+lignes_techniques = apercu_technique
 
 # --- Étape 3 : analyse -------------------------------------------------------
 if fichier_source and fichiers_matrices and mapping_valide:

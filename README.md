@@ -21,19 +21,20 @@ Une page s'ouvre dans votre navigateur (généralement http://localhost:8501).
 
 ## Utilisation
 
-1. **Fichiers** : déposez le tableau 1 (export de contrôle .xlsx), les fichiers
+1. **Fichiers** : déposez le tableau 1 (export de contrôle .xlsx) et les fichiers
    matrices (tableau 2) — soit un par un, soit directement vos deux .zip
-   (`MATRICE_FICHE_BAR_EN.zip`, `Matrice_fiches_BAR_TH.zip`) — et, si besoin,
-   le tableau de correspondance des données techniques par fiche.
+   (`MATRICE_FICHE_BAR_EN.zip`, `Matrice_fiches_BAR_TH.zip`).
 2. **Correspondance code fiche → fichier matrice** : l'application détecte
    automatiquement, à partir des noms de fichiers, quel code de fiche (ex.
    `BAR-TH-104`) correspond à quelle matrice. **Vérifiez ce tableau** avant de
    continuer — vous pouvez corriger une ligne ou en ajouter/supprimer
    directement dans le tableau éditable.
-3. **Colonnes techniques par fiche** (si un tableau technique est fourni) :
-   l'application affiche, pour vérification, la résolution de chaque ligne de
-   votre tableau (quelle(s) colonne(s) du tableau 1 sont utilisées, ou si la
-   valeur est fixe). Vous pouvez corriger ici aussi.
+3. **Colonnes techniques par fiche** : la correspondance (surface, épaisseur,
+   marque d'isolant...) est **intégrée directement dans le code** — plus besoin
+   de fournir de fichier à chaque lancement. Elle reste affichée et modifiable
+   ponctuellement à l'écran pour vérification, mais toute modification faite
+   ici ne persiste pas après fermeture de la page (voir plus bas pour la
+   modifier de façon permanente).
 4. **Analyse** : l'application lit le tableau 1, regroupe les opérations par
    client, et affiche un récapitulatif (nombre d'opérations par client et par
    fiche). Si un code de fiche du tableau 1 n'a pas de matrice associée,
@@ -78,16 +79,25 @@ uniquement dans le tableau 2, ne sont jamais remplies, comme demandé :
 
 En plus des colonnes communes, chaque fiche CEE peut nécessiter le report de
 colonnes techniques spécifiques (ex. surface, épaisseur, marque et référence
-d'isolant, résistance...). Ces correspondances sont lues depuis le fichier
-"tableau de correspondance des données techniques" que vous fournissez, avec 3
-colonnes : le code fiche, le nom de la colonne à remplir dans le tableau 2, et
-soit un ou plusieurs noms de colonnes du tableau 1 à concaténer avec un `+`
-(ex. `Marque isolant + Référence isolant`), soit une **valeur fixe** si aucune
-colonne ne correspond (ex. `3.85` pour BAR-EN-102) — l'application écrit alors
-cette valeur telle quelle sur toutes les opérations concernées par cette fiche.
+d'isolant, résistance...). Cette correspondance est **intégrée directement
+dans le code** (variable `DONNEES_TECHNIQUES_PAR_FICHE` en haut du fichier
+`app.py`), avec pour chaque ligne : le code fiche, le nom de la colonne à
+remplir dans le tableau 2, et soit un ou plusieurs noms de colonnes du
+tableau 1 à concaténer avec un `+` (ex. `Marque isolant + Référence isolant`),
+soit une **valeur fixe** si aucune colonne ne correspond (ex. `3.85` pour
+BAR-EN-102) — l'application écrit alors cette valeur telle quelle sur toutes
+les opérations concernées par cette fiche.
 
-Ce fichier peut être complété au fil du temps (nouvelles fiches, nouvelles
-colonnes) sans modification du code : il suffit d'ajouter des lignes.
+**Pour ajouter ou modifier une règle de façon permanente** (nouvelle fiche,
+nouvelle colonne technique), éditez la liste `DONNEES_TECHNIQUES_PAR_FICHE`
+dans `app.py` — chaque entrée suit le même format :
+```python
+{"code_fiche": "BAR-TH-XXX", "colonne_cible": "Nom de la colonne dans le tableau 2", "expression_source": "Colonne du tableau 1"},
+```
+L'écran "2bis. Colonnes techniques par fiche" de l'application permet de
+vérifier et corriger ponctuellement ces règles pour une session, sans toucher
+au code — mais ces changements ne sont pas conservés après fermeture de la
+page.
 
 Un point de vigilance identifié pendant les tests : certaines cellules des
 modèles matrices avaient un format "date" préréglé qui aurait déformé
