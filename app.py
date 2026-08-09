@@ -69,6 +69,9 @@ COLONNE_CLIENT = "raison sociale du beneficiaire de l'operation"
 
 FEUILLE_MATRICE = "Personnes morales"  # nom de la feuille dans les matrices
 
+MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MIME_ZIP = "application/zip"
+
 
 # ---------------------------------------------------------------------------
 # Fonctions utilitaires de normalisation / correspondance de colonnes
@@ -756,6 +759,7 @@ if resultats_complet:
             f"📄 Télécharger : {nom_fichier}",
             data=octets,
             file_name=nom_fichier,
+            mime=MIME_XLSX,
             key="dl_complet_unique",
         )
     else:
@@ -768,7 +772,7 @@ if resultats_complet:
             "📦 Télécharger le tableau 2 complet (.zip, toutes fiches)",
             data=zip_complet,
             file_name=f"tableau2_complet_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-            mime="application/zip",
+            mime=MIME_ZIP,
             key="dl_complet_zip",
         )
         with st.expander("Voir / télécharger fichier par fichier (tableau complet)"):
@@ -777,6 +781,7 @@ if resultats_complet:
                     f"Télécharger : {nom_fichier}",
                     data=octets,
                     file_name=nom_fichier,
+                    mime=MIME_XLSX,
                     key=f"dl_complet_{code_fiche}",
                 )
 
@@ -796,11 +801,12 @@ if resultats:
         "📦 Télécharger tous les clients (.zip)",
         data=zip_buffer,
         file_name=f"fiches_par_client_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
-        mime="application/zip",
+        mime=MIME_ZIP,
+        key="dl_tous_clients_zip",
     )
 
     st.caption("Ou téléchargez le zip d'un seul client :")
-    for client, fichiers in resultats.items():
+    for i, (client, fichiers) in enumerate(resultats.items()):
         if not fichiers:
             continue
         client_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(client))[:80]
@@ -810,7 +816,8 @@ if resultats:
                 f"📄 {client} — {nom_fichier}",
                 data=octets,
                 file_name=nom_fichier,
-                key=f"dl_client_unique_{client}",
+                mime=MIME_XLSX,
+                key=f"dl_client_unique_{i}_{client_safe}",
             )
         else:
             zip_client = io.BytesIO()
@@ -822,19 +829,20 @@ if resultats:
                 f"📦 {client} ({len(fichiers)} fichier(s))",
                 data=zip_client,
                 file_name=f"{client_safe}.zip",
-                mime="application/zip",
-                key=f"dl_client_zip_{client}",
+                mime=MIME_ZIP,
+                key=f"dl_client_zip_{i}_{client_safe}",
             )
 
     with st.expander("Voir / télécharger fichier par fichier (par client)"):
-        for client, fichiers in resultats.items():
+        for i, (client, fichiers) in enumerate(resultats.items()):
             st.markdown(f"**{client}**")
-            for nom_fichier, octets in fichiers:
+            for j, (nom_fichier, octets) in enumerate(fichiers):
                 st.download_button(
                     f"Télécharger : {nom_fichier}",
                     data=octets,
                     file_name=nom_fichier,
-                    key=f"dl_{client}_{nom_fichier}",
+                    mime=MIME_XLSX,
+                    key=f"dl_detail_{i}_{j}",
                 )
 
     # --- Mails -----------------------------------------------------------
