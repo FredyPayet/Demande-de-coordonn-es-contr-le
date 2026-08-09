@@ -31,6 +31,7 @@ from datetime import datetime
 import streamlit as st
 import openpyxl
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font
 
 # ---------------------------------------------------------------------------
 # Essai d'import pywin32 (uniquement disponible / utile sous Windows)
@@ -52,6 +53,7 @@ COLONNES_EXCLUES = [
     "numero de telephone du beneficiaire",
     "adresse de courriel du beneficiaire",
     "montant du role actif et incitatif",
+    "fonction",
 ]
 
 # Nom (normalisé) de la colonne source qui contient le code de la fiche
@@ -71,6 +73,17 @@ FEUILLE_MATRICE = "Personnes morales"  # nom de la feuille dans les matrices
 
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MIME_ZIP = "application/zip"
+
+
+def extraire_numero_lot(nom_fichier_source):
+    """Extrait le numéro de lot depuis le nom du fichier tableau 1
+    (ex: 'ODICEE_Export_lot_de_controle_XX818P_...xlsx' -> 'XX818P').
+    Retourne None si le motif n'est pas trouvé dans le nom du fichier."""
+    base = os.path.splitext(os.path.basename(nom_fichier_source))[0]
+    m = re.search(r"lot[_\s]*de[_\s]*controle[_\s]*([A-Za-z0-9]+)", base, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +370,23 @@ def valeur_regle_technique(operation, regle):
 # Génération des matrices remplies (une par client x fiche)
 # ---------------------------------------------------------------------------
 
+def _uniformiser_mise_en_forme(cellule, valeur):
+    """Applique une mise en forme uniforme (police noire, non grasse) et
+    réinitialise le format numérique, pour que toutes les données remplies
+    aient le même rendu quelle que soit la mise en forme héritée du modèle
+    (certaines cellules du modèle sont pré-formatées en gras/couleur/date)."""
+    police_actuelle = cellule.font
+    cellule.font = Font(
+        name=police_actuelle.name,
+        size=police_actuelle.size,
+        bold=False,
+        italic=police_actuelle.italic,
+        color="FF000000",
+    )
+    if not isinstance(valeur, datetime):
+        cellule.number_format = "General"
+
+
 def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_techniques=None):
     """Copie la matrice modèle (contenu_bytes) et y ajoute une ligne par
     opération. 'regles_techniques' (optionnel) est la liste des règles
@@ -382,15 +412,22 @@ def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_
     limite_signalement = (col_siret + 8) if col_siret else max(entetes.keys(), default=0)
 
     # correspondance colonne matrice -> colonne source (nom normalisé)
+    # On restreint volontairement cette recherche à la zone "identité" de la
+    # matrice (jusqu'à la colonne SIRET + quelques colonnes voisines) : au-delà,
+    # les intitulés génériques de la partie audit (ex. "Fonction") pourraient
+    # sinon être associés par erreur à une colonne du tableau 1 qui n'a rien à
+    # voir (ex. "Fonction interlocuteur projet").
     correspondance = {}  # col_matrice -> nom_colonne_source
     colonnes_non_mappees = []
     for col_matrice, nom_entete in entetes.items():
+        if col_matrice > limite_signalement:
+            continue
         if colonne_exclue(nom_entete):
             continue
         cible = trouver_meilleure_correspondance(nom_entete, index_cols_source)
         if cible:
             correspondance[col_matrice] = cible
-        elif col_matrice <= limite_signalement:
+        else:
             colonnes_non_mappees.append(nom_entete)
 
     # règles techniques spécifiques à la fiche (colonnes situées plus loin
@@ -420,17 +457,11 @@ def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_
         for col_matrice, nom_source in correspondance.items():
             valeur = operation.get(nom_source)
             cellule = ws.cell(row=ligne_ecriture, column=col_matrice, value=valeur)
-            # Certains modèles ont des cellules pré-formatées en date/monnaie
-            # sur ces colonnes (héritage du modèle Excel). On repasse en
-            # format standard pour éviter qu'un nombre (ex. SIREN) ne
-            # s'affiche comme une date.
-            if not isinstance(valeur, datetime):
-                cellule.number_format = "General"
+            _uniformiser_mise_en_forme(cellule, valeur)
         for col_matrice, regle in regles_par_colonne.items():
             valeur = valeur_regle_technique(operation, regle)
             cellule = ws.cell(row=ligne_ecriture, column=col_matrice, value=valeur)
-            if not isinstance(valeur, datetime):
-                cellule.number_format = "General"
+            _uniformiser_mise_en_forme(cellule, valeur)
         ligne_ecriture += 1
 
     buffer = io.BytesIO()
@@ -555,6 +586,20 @@ if fichier_source and fichiers_matrices and mapping_valide:
 
     st.success(f"{len(operations)} opération(s) trouvée(s) dans le tableau 1.")
 
+    numero_lot = extraire_numero_lot(fichier_source.name)
+    col_lot1, col_lot2 = st.columns([2, 3])
+    with col_lot1:
+        numero_lot = st.text_input(
+            "Numéro de lot détecté (utilisé pour nommer les fichiers générés)",
+            value=numero_lot or "",
+        )
+    if not numero_lot:
+        st.warning(
+            "Numéro de lot introuvable dans le nom du fichier tableau 1 "
+            "(motif attendu : '...lot_de_controle_NUMERO_...'). "
+            "Renseignez-le manuellement ci-dessus avant de générer les fichiers."
+        )
+
     if COLONNE_CLIENT not in index_cols_source:
         st.error(
             "Colonne client introuvable dans le tableau 1 "
@@ -634,9 +679,11 @@ if fichier_source and fichiers_matrices and mapping_valide:
         resultats = {}  # client -> [(nom_fichier, bytes)]
         avertissements_colonnes = {}
         avertissements_technique = {}
+        lot_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(numero_lot or "LOT_INCONNU")).strip()
         with st.spinner("Génération en cours..."):
             for client, par_fiche in groupes.items():
                 fichiers_client = []
+                plusieurs_fiches = len(par_fiche) > 1
                 for code_fiche, ops in par_fiche.items():
                     nom_matrice = code_vers_fichier[code_fiche]
                     contenu = fichiers_matrices[nom_matrice]
@@ -648,9 +695,14 @@ if fichier_source and fichiers_matrices and mapping_valide:
                     except Exception as e:
                         st.error(f"Erreur sur {client} / {code_fiche} : {e}")
                         continue
-                    base_nom = os.path.splitext(nom_matrice)[0]
                     client_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(client))[:80]
-                    nom_sortie = f"{client_safe} - {base_nom}.xlsx"
+                    nom_sortie = f"Demande de coordonnées - {lot_safe} - {client_safe}"
+                    if plusieurs_fiches:
+                        # un client avec plusieurs types de fiches nécessite un
+                        # fichier par fiche : on ajoute le code fiche pour éviter
+                        # que les fichiers ne s'écrasent entre eux
+                        nom_sortie += f" - {code_fiche}"
+                    nom_sortie += ".xlsx"
                     fichiers_client.append((nom_sortie, octets))
                     if colonnes_non_mappees:
                         avertissements_colonnes[nom_matrice] = colonnes_non_mappees
@@ -678,6 +730,8 @@ if fichier_source and fichiers_matrices and mapping_valide:
         resultats_complet = {}  # code_fiche -> (nom_fichier, bytes)
         avertissements_colonnes_c = {}
         avertissements_technique_c = {}
+        lot_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(numero_lot or "LOT_INCONNU")).strip()
+        plusieurs_fiches_global = len(groupes_toutes_operations) > 1
         with st.spinner("Génération du tableau 2 complet en cours..."):
             for code_fiche, ops in groupes_toutes_operations.items():
                 nom_matrice = code_vers_fichier[code_fiche]
@@ -690,8 +744,13 @@ if fichier_source and fichiers_matrices and mapping_valide:
                 except Exception as e:
                     st.error(f"Erreur sur {code_fiche} : {e}")
                     continue
-                base_nom = os.path.splitext(nom_matrice)[0]
-                nom_sortie = f"Tableau 2 complet - {base_nom}.xlsx"
+                nom_sortie = lot_safe
+                if plusieurs_fiches_global:
+                    # plusieurs types de fiches -> un fichier par fiche, on
+                    # ajoute le code fiche pour éviter que les fichiers ne
+                    # s'écrasent entre eux
+                    nom_sortie += f" - {code_fiche}"
+                nom_sortie += ".xlsx"
                 resultats_complet[code_fiche] = (nom_sortie, octets)
                 if colonnes_non_mappees:
                     avertissements_colonnes_c[nom_matrice] = colonnes_non_mappees

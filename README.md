@@ -69,11 +69,41 @@ Une page s'ouvre dans votre navigateur (généralement http://localhost:8501).
 
 Le report ne se fait **pas** par position de colonne (l'ordre diffère d'une
 matrice à l'autre selon la fiche) mais par **correspondance du nom d'en-tête**
-entre le tableau 1 et chaque matrice. Les 3 colonnes suivantes, présentes
-uniquement dans le tableau 2, ne sont jamais remplies, comme demandé :
+entre le tableau 1 et chaque matrice, restreinte à la zone "identité" de la
+matrice (jusqu'à la colonne SIRET + quelques colonnes voisines). Les colonnes
+suivantes ne sont jamais remplies, comme demandé :
 - numéro de téléphone du bénéficiaire
 - Adresse de courriel du bénéficiaire
 - Montant du rôle actif et incitatif (€)
+- Fonction (colonnes de la partie "audit terrain" du bureau de contrôle)
+
+Toutes les cellules remplies par l'application reçoivent une mise en forme
+uniforme : police noire, non grasse — quelle que soit la mise en forme
+héritée du modèle Excel d'origine sur cette cellule.
+
+Un point de vigilance identifié pendant les tests : certaines cellules des
+modèles matrices avaient un format "date" préréglé qui aurait déformé
+l'affichage de valeurs numériques (ex. un SIREN). Le script réinitialise
+systématiquement le format des cellules qu'il remplit pour éviter ce piège.
+
+## Nommage des fichiers générés
+
+- **Numéro de lot** : détecté automatiquement dans le nom du fichier tableau 1
+  (motif attendu : `..._lot_de_controle_NUMERO_...`, ex.
+  `ODICEE_Export_lot_de_controle_XX818P_...xlsx` → `XX818P`). Il est affiché
+  et modifiable à l'écran (étape 3) avant génération — si le motif n'est pas
+  détecté, un avertissement s'affiche et vous devez le renseigner vous-même.
+- **Fichier groupé** ("tableau 2 complet") : nommé `{numéro de lot}.xlsx`. Si
+  plusieurs types de fiches sont présents dans le lot, un fichier est généré
+  par fiche et le code fiche est ajouté au nom pour éviter les collisions
+  (ex. `XX818P - BAR-EN-103.xlsx`).
+- **Fichiers par client** : nommés `Demande de coordonnées - {numéro de lot}
+  - {nom du client}.xlsx`. Si un même client a des opérations relevant de
+  plusieurs types de fiches différents, le code fiche est ajouté en fin de
+  nom pour éviter que les fichiers ne s'écrasent entre eux (ex. `Demande de
+  coordonnées - XX818P - Client 3 - BAR-EN-103.xlsx`).
+
+## Limites connues / à vérifier avec vous
 
 ### Colonnes techniques propres à chaque fiche CEE
 
@@ -98,11 +128,6 @@ L'écran "2bis. Colonnes techniques par fiche" de l'application permet de
 vérifier et corriger ponctuellement ces règles pour une session, sans toucher
 au code — mais ces changements ne sont pas conservés après fermeture de la
 page.
-
-Un point de vigilance identifié pendant les tests : certaines cellules des
-modèles matrices avaient un format "date" préréglé qui aurait déformé
-l'affichage de valeurs numériques (ex. un SIREN). Le script réinitialise
-systématiquement le format des cellules qu'il remplit pour éviter ce piège.
 
 ## Limites connues / à vérifier avec vous
 
