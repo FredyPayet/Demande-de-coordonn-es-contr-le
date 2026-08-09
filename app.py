@@ -640,8 +640,21 @@ if fichier_source and fichiers_matrices and mapping_valide:
             )
     st.dataframe(recap, use_container_width=True)
 
+    # Regroupement par fiche uniquement, tous clients confondus (pour la
+    # version "tableau 2 complet")
+    groupes_toutes_operations = defaultdict(list)
+    for client, par_fiche in groupes.items():
+        for code_fiche, ops in par_fiche.items():
+            groupes_toutes_operations[code_fiche].extend(ops)
+
     st.header("4. Génération des fichiers")
-    if st.button("Générer les fichiers tableau 2 par client", type="primary"):
+    col_gen1, col_gen2 = st.columns(2)
+    with col_gen1:
+        generer_par_client = st.button("Générer les fichiers tableau 2 par client", type="primary")
+    with col_gen2:
+        generer_complet = st.button("Générer le tableau 2 complet (tous clients)")
+
+    if generer_par_client:
         resultats = {}  # client -> [(nom_fichier, bytes)]
         avertissements_colonnes = {}
         avertissements_technique = {}
@@ -671,7 +684,7 @@ if fichier_source and fichiers_matrices and mapping_valide:
 
         st.session_state["resultats"] = resultats
         st.session_state["avertissements_colonnes"] = avertissements_colonnes
-        st.success("Génération terminée.")
+        st.success("Génération par client terminée.")
 
         if avertissements_colonnes:
             with st.expander("⚠️ Colonnes de matrices non reconnues (laissées vides)"):
@@ -685,12 +698,92 @@ if fichier_source and fichiers_matrices and mapping_valide:
                     st.write(f"**{cle}**")
                     st.write(", ".join(cibles))
 
+    if generer_complet:
+        resultats_complet = {}  # code_fiche -> (nom_fichier, bytes)
+        avertissements_colonnes_c = {}
+        avertissements_technique_c = {}
+        with st.spinner("Génération du tableau 2 complet en cours..."):
+            for code_fiche, ops in groupes_toutes_operations.items():
+                nom_matrice = code_vers_fichier[code_fiche]
+                contenu = fichiers_matrices[nom_matrice]
+                regles_fiche = regles_techniques_par_fiche.get(code_fiche, [])
+                try:
+                    octets, colonnes_non_mappees, cibles_non_trouvees = remplir_matrice(
+                        contenu, ops, index_cols_source, regles_fiche
+                    )
+                except Exception as e:
+                    st.error(f"Erreur sur {code_fiche} : {e}")
+                    continue
+                base_nom = os.path.splitext(nom_matrice)[0]
+                nom_sortie = f"Tableau 2 complet - {base_nom}.xlsx"
+                resultats_complet[code_fiche] = (nom_sortie, octets)
+                if colonnes_non_mappees:
+                    avertissements_colonnes_c[nom_matrice] = colonnes_non_mappees
+                if cibles_non_trouvees:
+                    avertissements_technique_c[f"{code_fiche} ({nom_matrice})"] = cibles_non_trouvees
+
+        st.session_state["resultats_complet"] = resultats_complet
+        st.success("Génération du tableau 2 complet terminée.")
+
+        if avertissements_colonnes_c:
+            with st.expander("⚠️ Colonnes de matrices non reconnues (laissées vides)"):
+                for nom_matrice, cols in avertissements_colonnes_c.items():
+                    st.write(f"**{nom_matrice}**")
+                    st.write(", ".join(cols))
+
+        if avertissements_technique_c:
+            with st.expander("⚠️ Colonnes techniques non trouvées dans la matrice (à vérifier)"):
+                for cle, cibles in avertissements_technique_c.items():
+                    st.write(f"**{cle}**")
+                    st.write(", ".join(cibles))
+
 # --- Étape 5 : téléchargement + mails ---------------------------------------
 resultats = st.session_state.get("resultats")
-if resultats:
+resultats_complet = st.session_state.get("resultats_complet")
+
+if resultats or resultats_complet:
     st.header("5. Téléchargement")
 
-    # zip global
+if resultats_complet:
+    st.subheader("5a. Tableau 2 complet (toutes les opérations, tous clients)")
+    st.caption(
+        "Un fichier par fiche, contenant toutes les opérations de tous les "
+        "clients — utile pour une vue d'ensemble ou un contrôle global."
+    )
+    if len(resultats_complet) == 1:
+        (nom_fichier, octets) = next(iter(resultats_complet.values()))
+        st.download_button(
+            f"📄 Télécharger : {nom_fichier}",
+            data=octets,
+            file_name=nom_fichier,
+            key="dl_complet_unique",
+        )
+    else:
+        zip_complet = io.BytesIO()
+        with zipfile.ZipFile(zip_complet, "w", zipfile.ZIP_DEFLATED) as z:
+            for code_fiche, (nom_fichier, octets) in resultats_complet.items():
+                z.writestr(nom_fichier, octets)
+        zip_complet.seek(0)
+        st.download_button(
+            "📦 Télécharger le tableau 2 complet (.zip, toutes fiches)",
+            data=zip_complet,
+            file_name=f"tableau2_complet_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
+            mime="application/zip",
+            key="dl_complet_zip",
+        )
+        with st.expander("Voir / télécharger fichier par fichier (tableau complet)"):
+            for code_fiche, (nom_fichier, octets) in resultats_complet.items():
+                st.download_button(
+                    f"Télécharger : {nom_fichier}",
+                    data=octets,
+                    file_name=nom_fichier,
+                    key=f"dl_complet_{code_fiche}",
+                )
+
+if resultats:
+    st.subheader("5b. Fichiers par client")
+
+    # zip global (tous clients, tous fichiers)
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as z:
         for client, fichiers in resultats.items():
@@ -700,15 +793,42 @@ if resultats:
     zip_buffer.seek(0)
 
     st.download_button(
-        "📦 Télécharger tous les fichiers (.zip)",
+        "📦 Télécharger tous les clients (.zip)",
         data=zip_buffer,
         file_name=f"fiches_par_client_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
         mime="application/zip",
     )
 
-    with st.expander("Voir / télécharger fichier par fichier"):
+    st.caption("Ou téléchargez le zip d'un seul client :")
+    for client, fichiers in resultats.items():
+        if not fichiers:
+            continue
+        client_safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(client))[:80]
+        if len(fichiers) == 1:
+            nom_fichier, octets = fichiers[0]
+            st.download_button(
+                f"📄 {client} — {nom_fichier}",
+                data=octets,
+                file_name=nom_fichier,
+                key=f"dl_client_unique_{client}",
+            )
+        else:
+            zip_client = io.BytesIO()
+            with zipfile.ZipFile(zip_client, "w", zipfile.ZIP_DEFLATED) as z:
+                for nom_fichier, octets in fichiers:
+                    z.writestr(nom_fichier, octets)
+            zip_client.seek(0)
+            st.download_button(
+                f"📦 {client} ({len(fichiers)} fichier(s))",
+                data=zip_client,
+                file_name=f"{client_safe}.zip",
+                mime="application/zip",
+                key=f"dl_client_zip_{client}",
+            )
+
+    with st.expander("Voir / télécharger fichier par fichier (par client)"):
         for client, fichiers in resultats.items():
-            st.subheader(client)
+            st.markdown(f"**{client}**")
             for nom_fichier, octets in fichiers:
                 st.download_button(
                     f"Télécharger : {nom_fichier}",

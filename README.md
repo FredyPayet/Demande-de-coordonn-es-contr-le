@@ -38,10 +38,23 @@ Une page s'ouvre dans votre navigateur (généralement http://localhost:8501).
    client, et affiche un récapitulatif (nombre d'opérations par client et par
    fiche). Si un code de fiche du tableau 1 n'a pas de matrice associée,
    un avertissement s'affiche et ces opérations sont ignorées.
-5. **Génération** : cliquez sur "Générer les fichiers tableau 2 par client".
-   Un fichier est créé par client et par type de fiche (un client avec deux
-   types d'opérations différents recevra deux fichiers).
-6. **Téléchargement** : récupérez tout en un .zip, ou fichier par fichier.
+5. **Génération** : deux boutons indépendants sont disponibles :
+   - **"Générer les fichiers tableau 2 par client"** : un fichier par client et
+     par type de fiche (un client avec deux types d'opérations différents
+     recevra deux fichiers).
+   - **"Générer le tableau 2 complet (tous clients)"** : un fichier par fiche,
+     mais contenant **toutes** les opérations de **tous** les clients — pratique
+     pour une vue d'ensemble ou un contrôle global, sans avoir à ouvrir un
+     fichier par client.
+   Vous pouvez utiliser l'un, l'autre, ou les deux.
+6. **Téléchargement** :
+   - *Tableau 2 complet* : téléchargement direct si une seule fiche est
+     concernée, sinon un .zip regroupant un fichier par fiche (+ téléchargement
+     fichier par fichier dans un menu déroulant).
+   - *Par client* : un .zip global (tous les clients), un bouton de
+     téléchargement dédié pour **chaque client** (fichier unique ou .zip selon
+     le nombre de fiches du client), et le détail fichier par fichier dans un
+     menu déroulant.
 7. **Mails** : personnalisez le sujet et le corps du mail type (variables
    disponibles : `{client}`, `{nb_fiches}`, `{nb_operations}`), prévisualisez,
    puis :
