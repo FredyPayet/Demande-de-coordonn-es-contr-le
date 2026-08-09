@@ -860,11 +860,46 @@ if fichier_source and fichiers_matrices and mapping_valide:
             groupes_toutes_operations[code_fiche].extend(ops)
 
     st.header("3. Génération des fichiers")
+
+    # Style vert pour les boutons de génération une fois l'action effectuée
+    # (ciblage CSS via la clé du bouton, propre à Streamlit récent)
+    style_vert = ""
+    if st.session_state.get("genere_par_client"):
+        style_vert += """
+        .st-key-btn_generer_client button {
+            background-color: #28a745 !important;
+            color: white !important;
+            border-color: #28a745 !important;
+        }
+        """
+    if st.session_state.get("genere_complet"):
+        style_vert += """
+        .st-key-btn_generer_complet button {
+            background-color: #28a745 !important;
+            color: white !important;
+            border-color: #28a745 !important;
+        }
+        """
+    if style_vert:
+        st.markdown(f"<style>{style_vert}</style>", unsafe_allow_html=True)
+
     col_gen1, col_gen2 = st.columns(2)
     with col_gen1:
-        generer_par_client = st.button("Générer les fichiers tableau 2 par client", type="primary")
+        generer_par_client = st.button(
+            "✓ Fichiers générés" if st.session_state.get("genere_par_client") else "Générer les fichiers tableau 2 par client",
+            type="primary",
+            key="btn_generer_client",
+        )
     with col_gen2:
-        generer_complet = st.button("Générer le tableau 2 complet (tous clients)")
+        generer_complet = st.button(
+            "✓ Tableau complet généré" if st.session_state.get("genere_complet") else "Générer le tableau 2 complet (tous clients)",
+            key="btn_generer_complet",
+        )
+
+    if generer_par_client:
+        st.session_state["genere_par_client"] = True
+    if generer_complet:
+        st.session_state["genere_complet"] = True
 
     if generer_par_client:
         resultats = {}  # client -> [ {nom_fichier, octets, code_fiche, objet, corps_mail} ]
@@ -929,25 +964,9 @@ if fichier_source and fichiers_matrices and mapping_valide:
 
         st.session_state["resultats"] = resultats
         st.session_state["avertissements_colonnes"] = avertissements_colonnes
-        st.success("Génération par client terminée.")
-
-        if avertissements_colonnes:
-            with st.expander("⚠️ Colonnes de matrices non reconnues (laissées vides)"):
-                for nom_matrice, cols in avertissements_colonnes.items():
-                    st.write(f"**{nom_matrice}**")
-                    st.write(", ".join(cols))
-
-        if avertissements_technique:
-            with st.expander("⚠️ Colonnes techniques non trouvées dans la matrice (à vérifier)"):
-                for cle, cibles in avertissements_technique.items():
-                    st.write(f"**{cle}**")
-                    st.write(", ".join(cibles))
-
-        if avertissements_mail:
-            with st.expander("⚠️ Informations manquantes pour le mail type (à compléter manuellement)"):
-                for cle, manques in avertissements_mail.items():
-                    st.write(f"**{cle}** : " + ", ".join(manques))
-
+        st.session_state["avertissements_technique"] = avertissements_technique
+        st.session_state["avertissements_mail"] = avertissements_mail
+        st.rerun()
 
     if generer_complet:
         resultats_complet = {}  # code_fiche -> (nom_fichier, bytes)
@@ -981,19 +1000,31 @@ if fichier_source and fichiers_matrices and mapping_valide:
                     avertissements_technique_c[f"{code_fiche} ({nom_matrice})"] = cibles_non_trouvees
 
         st.session_state["resultats_complet"] = resultats_complet
+        st.session_state["avertissements_colonnes_c"] = avertissements_colonnes_c
+        st.session_state["avertissements_technique_c"] = avertissements_technique_c
+        st.rerun()
+
+    # --- Retour persistant après génération (survit au rerun immédiat) -----
+    if st.session_state.get("genere_par_client"):
+        st.success("Génération par client terminée.")
+        for nom_matrice, cols in st.session_state.get("avertissements_colonnes", {}).items():
+            with st.expander(f"⚠️ Colonnes non reconnues — {nom_matrice}"):
+                st.write(", ".join(cols))
+        for cle, cibles in st.session_state.get("avertissements_technique", {}).items():
+            with st.expander(f"⚠️ Colonnes techniques non trouvées — {cle}"):
+                st.write(", ".join(cibles))
+        for cle, manques in st.session_state.get("avertissements_mail", {}).items():
+            with st.expander(f"⚠️ Informations manquantes pour le mail — {cle}"):
+                st.write(", ".join(manques))
+
+    if st.session_state.get("genere_complet"):
         st.success("Génération du tableau 2 complet terminée.")
-
-        if avertissements_colonnes_c:
-            with st.expander("⚠️ Colonnes de matrices non reconnues (laissées vides)"):
-                for nom_matrice, cols in avertissements_colonnes_c.items():
-                    st.write(f"**{nom_matrice}**")
-                    st.write(", ".join(cols))
-
-        if avertissements_technique_c:
-            with st.expander("⚠️ Colonnes techniques non trouvées dans la matrice (à vérifier)"):
-                for cle, cibles in avertissements_technique_c.items():
-                    st.write(f"**{cle}**")
-                    st.write(", ".join(cibles))
+        for nom_matrice, cols in st.session_state.get("avertissements_colonnes_c", {}).items():
+            with st.expander(f"⚠️ Colonnes non reconnues — {nom_matrice}"):
+                st.write(", ".join(cols))
+        for cle, cibles in st.session_state.get("avertissements_technique_c", {}).items():
+            with st.expander(f"⚠️ Colonnes techniques non trouvées — {cle}"):
+                st.write(", ".join(cibles))
 
 # --- Étape 5 : téléchargement + mails ---------------------------------------
 resultats = st.session_state.get("resultats")
