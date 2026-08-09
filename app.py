@@ -314,7 +314,7 @@ MODELE_CORPS_MAIL = (
 
 
 def construire_objet_mail(numero_lot, identifiant_client):
-    return f'"Demande de coordonnées" - {numero_lot} - {identifiant_client}'
+    return f"Demande de coordonnées - {numero_lot} - {identifiant_client}"
 
 
 # Colonnes source (tableau 1) à essayer, par ordre de préférence, pour
@@ -757,54 +757,17 @@ if fichiers_matrices_up:
 if fichiers_matrices:
     st.caption(f"{len(fichiers_matrices)} fichier(s) matrice détecté(s).")
 
-# --- Étape 2 : mapping code fiche -> matrice --------------------------------
+# --- Mapping code fiche -> matrice (détection automatique, non affichée) ---
 mapping_valide = None
 if fichiers_matrices:
-    st.header("2. Correspondance code fiche → fichier matrice")
-    st.caption(
-        "Détection automatique à partir des noms de fichiers. Vérifiez et "
-        "corrigez si besoin avant de générer les fichiers."
-    )
-    lignes_mapping = construire_mapping_fiches(fichiers_matrices)
-    mapping_valide = st.data_editor(
-        lignes_mapping,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "code_fiche": st.column_config.TextColumn("Code fiche (ex: BAR-TH-104)"),
-            "fichier_matrice": st.column_config.SelectboxColumn(
-                "Fichier matrice", options=sorted(fichiers_matrices.keys())
-            ),
-        },
-        key="editeur_mapping",
-    )
+    mapping_valide = construire_mapping_fiches(fichiers_matrices)
 
-# --- Étape 2bis : tableau des données techniques par fiche -----------------
-st.header("2bis. Colonnes techniques par fiche")
-st.caption(
-    "Correspondance intégrée à l'application : colonne(s) source du tableau 1 "
-    "(concaténées avec '+') ou valeur fixe si aucune colonne ne correspond. "
-    "Modifiable ponctuellement ci-dessous si besoin (non sauvegardé après "
-    "fermeture de la page — pour un changement permanent, modifiez le code)."
-)
-apercu_technique = st.data_editor(
-    DONNEES_TECHNIQUES_PAR_FICHE,
-    num_rows="dynamic",
-    use_container_width=True,
-    column_config={
-        "code_fiche": st.column_config.TextColumn("Code fiche"),
-        "colonne_cible": st.column_config.TextColumn("Colonne à remplir (tableau 2)"),
-        "expression_source": st.column_config.TextColumn(
-            "Colonne(s) source (tableau 1) ou valeur fixe"
-        ),
-    },
-    key="editeur_technique",
-)
-lignes_techniques = apercu_technique
+# --- Données techniques par fiche (intégrées au code, non affichées) -------
+lignes_techniques = DONNEES_TECHNIQUES_PAR_FICHE
 
 # --- Étape 3 : analyse -------------------------------------------------------
 if fichier_source and fichiers_matrices and mapping_valide:
-    st.header("3. Analyse du tableau 1")
+    st.header("2. Analyse du tableau 1")
 
     try:
         operations, index_cols_source, header_row_source = lire_tableau_source(fichier_source)
@@ -896,7 +859,7 @@ if fichier_source and fichiers_matrices and mapping_valide:
         for code_fiche, ops in par_fiche.items():
             groupes_toutes_operations[code_fiche].extend(ops)
 
-    st.header("4. Génération des fichiers")
+    st.header("3. Génération des fichiers")
     col_gen1, col_gen2 = st.columns(2)
     with col_gen1:
         generer_par_client = st.button("Générer les fichiers tableau 2 par client", type="primary")
@@ -1037,10 +1000,10 @@ resultats = st.session_state.get("resultats")
 resultats_complet = st.session_state.get("resultats_complet")
 
 if resultats or resultats_complet:
-    st.header("5. Téléchargement")
+    st.header("4. Téléchargement")
 
 if resultats_complet:
-    st.subheader("5a. Tableau 2 complet (toutes les opérations, tous clients)")
+    st.subheader("4a. Tableau 2 complet (toutes les opérations, tous clients)")
     st.caption(
         "Un fichier par fiche, contenant toutes les opérations de tous les "
         "clients — utile pour une vue d'ensemble ou un contrôle global."
@@ -1078,7 +1041,7 @@ if resultats_complet:
                 )
 
 if resultats:
-    st.subheader("5b. Actions par client")
+    st.subheader("4b. Actions par client")
     st.caption(
         "Pour chaque client (et chaque fiche s'il y en a plusieurs) : copiez "
         "l'objet du mail, copiez le corps du mail type, et téléchargez le "

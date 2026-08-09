@@ -18,31 +18,23 @@ Une page s'ouvre dans votre navigateur (généralement http://localhost:8501).
 
 1. **Fichiers** : déposez le tableau 1 (export de contrôle .xlsx) et les fichiers
    matrices (tableau 2) — soit un par un, soit directement vos deux .zip
-   (`MATRICE_FICHE_BAR_EN.zip`, `Matrice_fiches_BAR_TH.zip`).
-2. **Correspondance code fiche → fichier matrice** : l'application détecte
-   automatiquement, à partir des noms de fichiers, quel code de fiche (ex.
-   `BAR-TH-104`) correspond à quelle matrice. **Vérifiez ce tableau** avant de
-   continuer — vous pouvez corriger une ligne ou en ajouter/supprimer
-   directement dans le tableau éditable.
-3. **Colonnes techniques par fiche** : la correspondance (surface, épaisseur,
-   marque d'isolant...) est **intégrée directement dans le code** — plus besoin
-   de fournir de fichier à chaque lancement. Elle reste affichée et modifiable
-   ponctuellement à l'écran pour vérification, mais toute modification faite
-   ici ne persiste pas après fermeture de la page (voir plus bas pour la
-   modifier de façon permanente).
-4. **Analyse** : l'application lit le tableau 1, détecte le numéro de lot,
+   (`MATRICE_FICHE_BAR_EN.zip`, `Matrice_fiches_BAR_TH.zip`). La correspondance
+   code fiche → fichier matrice et les colonnes techniques par fiche sont
+   détectées/appliquées automatiquement en arrière-plan (non affichées à
+   l'écran — voir plus bas si vous devez les vérifier ou les modifier).
+2. **Analyse** : l'application lit le tableau 1, détecte le numéro de lot,
    regroupe les opérations par client, et affiche un récapitulatif (nombre
    d'opérations par client et par fiche). Si un code de fiche du tableau 1
    n'a pas de matrice associée, un avertissement s'affiche et ces opérations
    sont ignorées.
-5. **Génération** : deux boutons indépendants sont disponibles :
+3. **Génération** : deux boutons indépendants sont disponibles :
    - **"Générer les fichiers tableau 2 par client"** : un fichier par client et
      par type de fiche, plus l'objet et le corps du mail type correspondants.
    - **"Générer le tableau 2 complet (tous clients)"** : un fichier par fiche,
      mais contenant **toutes** les opérations de **tous** les clients — pratique
      pour une vue d'ensemble ou un contrôle global.
    Vous pouvez utiliser l'un, l'autre, ou les deux.
-6. **Actions par client** : pour chaque client (et chaque fiche s'il y en a
+4. **Actions par client** : pour chaque client (et chaque fiche s'il y en a
    plusieurs), trois boutons sont disponibles :
    - **📋 Copier l'objet** — copie l'objet du mail dans le presse-papiers.
    - **📋 Copier le mail** — copie le corps du mail type (coordonnées du
@@ -75,7 +67,7 @@ avertissement récapitulatif s'affiche après la génération.
 
 **Hypothèse retenue pour l'objet du mail** : en l'absence d'un numéro client
 identifié dans le tableau 1, l'objet utilise le **nom du client** (raison
-sociale) : `"Demande de coordonnées" - {numéro de lot} - {nom du client}`. Si
+sociale) : `Demande de coordonnées - {numéro de lot} - {nom du client}`. Si
 vous disposez d'un véritable numéro client distinct du nom, signalez-le pour
 adapter la formule.
 
@@ -116,7 +108,7 @@ systématiquement le format des cellules qu'il remplit pour éviter ce piège.
   plusieurs types de fiches différents, le code fiche est ajouté en fin de
   nom pour éviter que les fichiers ne s'écrasent entre eux (ex. `Demande de
   coordonnées - XX818P - Client 3 - BAR-EN-103.xlsx`).
-- **Objet du mail** : `"Demande de coordonnées" - {numéro de lot} - {nom du
+- **Objet du mail** : `Demande de coordonnées - {numéro de lot} - {nom du
   client}` (voir hypothèse ci-dessus).
 
 ## Colonnes techniques propres à chaque fiche CEE
