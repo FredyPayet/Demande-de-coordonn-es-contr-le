@@ -87,6 +87,22 @@ Toutes les cellules remplies par l'application reçoivent une mise en forme
 uniforme : police noire, non grasse — quelle que soit la mise en forme
 héritée du modèle Excel d'origine sur cette cellule.
 
+### Colonnes retirées des fichiers par client
+
+Dans les fichiers générés **par client** (pas dans le "tableau 2 complet"),
+les colonnes **vides** situées sous ces trois bandeaux sont automatiquement
+supprimées, pour ne garder que ce qui est utile au client :
+- "Données remplies par le bureau de contrôle issues de la synthèse des contrôles"
+- "Données remplies par l'organisme ayant réalisé le contrôle par contact"
+- "Données complétées par le demandeur"
+
+Seules les colonnes **vides** de ces sections sont retirées : si une colonne
+technique (ex. surface, marque d'isolant) se trouve physiquement dans l'une
+de ces sections mais a été remplie par l'application, elle est conservée. Le
+bandeau de titre de chaque section est reconstruit automatiquement sur les
+colonnes restantes. La colonne "Fonction" reste par ailleurs toujours vide
+(voir ci-dessus), qu'elle soit dans une section retirée ou non.
+
 Un point de vigilance identifié pendant les tests : certaines cellules des
 modèles matrices avaient un format "date" préréglé qui aurait déformé
 l'affichage de valeurs numériques (ex. un SIREN). Le script réinitialise

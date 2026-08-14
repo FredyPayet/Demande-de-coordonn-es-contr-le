@@ -508,12 +508,96 @@ def _uniformiser_mise_en_forme(cellule, valeur):
         cellule.number_format = "General"
 
 
-def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_techniques=None):
+# Sections (repérées par leur intitulé de sur-en-tête fusionné, ligne 1) dont
+# les colonnes VIDES (non remplies par l'application) sont retirées des
+# fichiers générés PAR CLIENT. Les colonnes de ces sections qui ont malgré
+# tout été remplies (ex: certaines données techniques logées dans la section
+# "bureau de contrôle" par exception, comme la surface d'isolant) sont
+# conservées.
+SECTIONS_A_RETIRER_POUR_CLIENT = [
+    "donnees remplies par le bureau de controle",
+    "donnees remplies par l'organisme ayant realise le controle par contact",
+    "donnees completees par le demandeur",
+]
+
+
+def _colonnes_vides_a_retirer(col_to_section, colonnes_remplies):
+    """Retourne, triée du plus grand au plus petit indice, la liste des
+    colonnes à supprimer : celles qui appartiennent (d'après col_to_section,
+    capturé avant toute modification) à une section listée dans
+    SECTIONS_A_RETIRER_POUR_CLIENT et qui ne contiennent aucune donnée
+    remplie par l'application (colonnes_remplies)."""
+    a_supprimer = []
+    for col, (ligne, texte) in col_to_section.items():
+        val = normaliser(texte)
+        if any(val.startswith(cible) for cible in SECTIONS_A_RETIRER_POUR_CLIENT):
+            if col not in colonnes_remplies:
+                a_supprimer.append(col)
+    return sorted(set(a_supprimer), reverse=True)
+
+
+def _capturer_bandeaux_ligne1(ws):
+    """Retourne {colonne_originale: (ligne, texte)} pour toutes les
+    sur-en-têtes fusionnées des lignes 1-2, avant toute suppression de
+    colonne (openpyxl perd ces libellés lors d'une suppression de colonnes
+    au sein d'une plage fusionnée : on les capture pour les reconstruire
+    nous-mêmes ensuite)."""
+    col_to_section = {}
+    for mc in ws.merged_cells.ranges:
+        if mc.min_row > 2:
+            continue
+        texte = ws.cell(row=mc.min_row, column=mc.min_col).value
+        if texte is None:
+            continue
+        for c in range(mc.min_col, mc.max_col + 1):
+            col_to_section[c] = (mc.min_row, texte)
+    return col_to_section
+
+
+def _reconstruire_bandeaux_ligne1(ws, survivants, col_to_section):
+    """Reconstruit les sur-en-têtes fusionnées des lignes 1-2 après
+    suppression de colonnes, à partir de la correspondance capturée avant
+    suppression et de la liste ordonnée des colonnes originales encore
+    présentes. Les plages fusionnées existantes doivent déjà avoir été
+    retirées (voir _demerger_lignes) avant l'appel."""
+    i = 0
+    n = len(survivants)
+    while i < n:
+        info = col_to_section.get(survivants[i])
+        if info is None:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and col_to_section.get(survivants[j + 1]) == info:
+            j += 1
+        ligne, texte = info
+        debut, fin = i + 1, j + 1  # positions actuelles (1-indexées)
+        if fin > debut:
+            ws.merge_cells(start_row=ligne, start_column=debut, end_row=ligne, end_column=fin)
+        ws.cell(row=ligne, column=debut, value=texte)
+        i = j + 1
+
+
+def _demerger_lignes_1_2(ws):
+    """Retire toutes les fusions de cellules des lignes 1-2 (à faire AVANT
+    toute suppression de colonnes : openpyxl gère mal la suppression de
+    colonnes au sein d'une plage fusionnée si on tente de démerger après)."""
+    for mc in list(ws.merged_cells.ranges):
+        if mc.min_row <= 2:
+            ws.unmerge_cells(str(mc))
+
+
+def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_techniques=None, simplifier_pour_client=False):
     """Copie la matrice modèle (contenu_bytes) et y ajoute une ligne par
     opération. 'regles_techniques' (optionnel) est la liste des règles
     supplémentaires à appliquer pour LA fiche de ces opérations (colonnes
-    techniques propres à la fiche, ex: isolation).
-    Retourne (bytes_du_fichier, colonnes_non_mappees, cibles_techniques_non_trouvees)."""
+    techniques propres à la fiche, ex: isolation). Si 'simplifier_pour_client'
+    est vrai, les colonnes des sections destinées au bureau de contrôle sont
+    supprimées du fichier (voir SECTIONS_A_RETIRER_POUR_CLIENT).
+    Retourne (bytes_du_fichier, colonnes_non_mappees, cibles_techniques_non_trouvees,
+    entetes_finales) — entetes_finales reflète la mise en page APRÈS une
+    éventuelle suppression de colonnes, pour un calcul correct des lettres de
+    colonnes dans le mail type."""
     wb = openpyxl.load_workbook(io.BytesIO(contenu_bytes))
     nom_feuille, header_row, entetes = lire_entetes_matrice(contenu_bytes)
     if nom_feuille is None:
@@ -585,10 +669,28 @@ def remplir_matrice(contenu_bytes, operations_client, index_cols_source, regles_
             _uniformiser_mise_en_forme(cellule, valeur)
         ligne_ecriture += 1
 
+    if simplifier_pour_client:
+        col_to_section = _capturer_bandeaux_ligne1(ws)
+        _demerger_lignes_1_2(ws)
+        colonnes_remplies = set(correspondance.keys()) | set(regles_par_colonne.keys())
+        a_supprimer = _colonnes_vides_a_retirer(col_to_section, colonnes_remplies)
+        survivants = [c for c in range(1, ws.max_column + 1) if c not in set(a_supprimer)]
+        for c in a_supprimer:
+            ws.delete_cols(c, 1)
+        _reconstruire_bandeaux_ligne1(ws, survivants, col_to_section)
+
+    # en-têtes finales (après suppression éventuelle), pour le calcul correct
+    # des lettres de colonnes utilisées dans le mail type
+    entetes_finales = {}
+    for c in range(1, ws.max_column + 1):
+        v = normaliser(ws.cell(row=header_row, column=c).value)
+        if v:
+            entetes_finales[c] = v
+
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
-    return buffer.read(), colonnes_non_mappees, cibles_techniques_non_trouvees
+    return buffer.read(), colonnes_non_mappees, cibles_techniques_non_trouvees, entetes_finales
 
 
 # ---------------------------------------------------------------------------
@@ -916,8 +1018,8 @@ if fichier_source and fichiers_matrices and mapping_valide:
                     contenu = fichiers_matrices[nom_matrice]
                     regles_fiche = regles_techniques_par_fiche.get(code_fiche, [])
                     try:
-                        octets, colonnes_non_mappees, cibles_non_trouvees = remplir_matrice(
-                            contenu, ops, index_cols_source, regles_fiche
+                        octets, colonnes_non_mappees, cibles_non_trouvees, entetes_finales = remplir_matrice(
+                            contenu, ops, index_cols_source, regles_fiche, simplifier_pour_client=True
                         )
                     except Exception as e:
                         st.error(f"Erreur sur {client} / {code_fiche} : {e}")
@@ -932,9 +1034,11 @@ if fichier_source and fichiers_matrices and mapping_valide:
                     nom_sortie += ".xlsx"
 
                     # --- éléments du mail type pour ce client / cette fiche ---
-                    _, _, entetes_matrice = lire_entetes_matrice(contenu)
+                    # (basés sur les en-têtes APRÈS suppression des colonnes,
+                    # pour que les lettres de colonnes citées dans le mail
+                    # correspondent bien au fichier réellement envoyé)
                     organisme_controle = extraire_organisme_controle(ops, index_cols_source)
-                    colonnes_interlocuteur = trouver_plage_colonnes_interlocuteur(entetes_matrice)
+                    colonnes_interlocuteur = trouver_plage_colonnes_interlocuteur(entetes_finales)
                     objet = construire_objet_mail(numero_lot or "LOT_INCONNU", client)
                     corps_mail = construire_corps_mail(code_fiche, organisme_controle, colonnes_interlocuteur, ops)
 
@@ -980,7 +1084,7 @@ if fichier_source and fichiers_matrices and mapping_valide:
                 contenu = fichiers_matrices[nom_matrice]
                 regles_fiche = regles_techniques_par_fiche.get(code_fiche, [])
                 try:
-                    octets, colonnes_non_mappees, cibles_non_trouvees = remplir_matrice(
+                    octets, colonnes_non_mappees, cibles_non_trouvees, _ = remplir_matrice(
                         contenu, ops, index_cols_source, regles_fiche
                     )
                 except Exception as e:
