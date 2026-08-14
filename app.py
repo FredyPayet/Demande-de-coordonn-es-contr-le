@@ -906,13 +906,41 @@ if fichier_source and fichiers_matrices and mapping_valide:
         )
         st.stop()
 
-    # code_fiche -> fichier_matrice (à partir du tableau édité)
+    # code_fiche -> fichier_matrice (à partir de la détection automatique)
     code_vers_fichier = {}
     for ligne in mapping_valide:
         code = (ligne.get("code_fiche") or "").strip().upper()
         fichier = ligne.get("fichier_matrice")
         if code and fichier:
             code_vers_fichier[code] = fichier
+
+    # Détecte les codes fiches présents dans le tableau 1 mais non couverts
+    # par la détection automatique (fichier matrice absent, ou nom de fichier
+    # ambigu). Dans ce cas, on propose une association manuelle plutôt que
+    # d'ignorer silencieusement ces opérations.
+    codes_presents = set()
+    for op in operations:
+        c = op.get(COLONNE_CODE_FICHE)
+        if c:
+            codes_presents.add(str(c).strip().upper())
+    codes_non_couverts = sorted(codes_presents - set(code_vers_fichier.keys()))
+
+    if codes_non_couverts:
+        st.warning(
+            "Certains codes fiches du tableau 1 n'ont pas été associés "
+            "automatiquement à un fichier matrice : " + ", ".join(codes_non_couverts) +
+            ". Associez-les ci-dessous pour ne pas perdre ces opérations."
+        )
+        with st.expander("🔧 Associer manuellement les fiches manquantes", expanded=True):
+            options_fichiers = ["-- ignorer ces opérations --"] + sorted(fichiers_matrices.keys())
+            for code in codes_non_couverts:
+                choix = st.selectbox(
+                    f"Fichier matrice pour « {code} »",
+                    options=options_fichiers,
+                    key=f"mapping_manuel_{code}",
+                )
+                if choix != options_fichiers[0]:
+                    code_vers_fichier[code] = choix
 
     # règles techniques par fiche (colonnes propres à chaque fiche CEE)
     regles_techniques_par_fiche = (
@@ -935,9 +963,9 @@ if fichier_source and fichiers_matrices and mapping_valide:
         groupes[client][code_fiche].append(op)
 
     if codes_sans_matrice:
-        st.warning(
-            "Codes fiches présents dans le tableau 1 mais sans matrice associée "
-            "(opérations ignorées) : " + ", ".join(sorted(codes_sans_matrice))
+        st.info(
+            "Opérations ignorées (fiche laissée sans association ci-dessus) : "
+            + ", ".join(sorted(codes_sans_matrice))
         )
 
     # tableau récapitulatif
